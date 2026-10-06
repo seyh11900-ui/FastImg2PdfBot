@@ -1,205 +1,252 @@
-import logging
 import os
-import tempfile
-from telegram import Update, BotCommand
+import io
+import logging
+from PIL import Image
+import img2pdf
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.constants import ChatAction
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
-from moviepy.editor import VideoFileClip
 
 # Configure logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Retrieve Telegram Bot Token from Environment Variables
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Fetch Bot Token from Environment Variables (Set in Railway)
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
 
-async def post_init(application: Application) -> None:
-    """Set bot commands menu on startup."""
+async def post_init(application):
+    """Sets up the bot's command menu button inside Telegram."""
     commands = [
-        BotCommand("start", "Start the bot"),
-        BotCommand("help", "How to use the bot"),
-        BotCommand("about", "Information about the bot"),
-        BotCommand("cancel", "Cancel current action"),
+        BotCommand("start", "Start the bot and see instructions"),
+        BotCommand("help", "How to use this bot"),
+        BotCommand("status", "Check queued images"),
+        BotCommand("clear", "Clear queued images"),
     ]
     await application.bot.set_my_commands(commands)
-    logger.info("Bot command menu registered successfully.")
 
 
-async def start_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Respond to the /start command in Khmer."""
-    if not update.message:
-        return
-
-    welcome_text = (
-        "👋 **សូមស្វាគមន៍មកកាន់ Video to MP3 Converter Bot!**\n\n"
-        "សូមផ្ញើ ឬ Forward ឯកសារ **វីដេអូ**, **Video Note (វីដេអូមូល)** ឬ **ឯកសារវីដេអូ** ផ្សេងៗមកកាន់ Chat នេះ "
-        "ខ្ញុំនឹងធ្វើការទាញយកសំឡេង និងផ្ញើជូនអ្នកវិញជាឯកសារ **MP3** ដោយស្វ័យប្រវត្តិ។\n\n"
-        "ចុច /help ដើម្បីមើលការណែនាំ និងបញ្ជាផ្សេងៗ។"
-    )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown")
-
-
-async def help_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Respond to the /help command."""
-    if not update.message:
-        return
-
-    help_text = (
-        "🤖 **How to Use This Bot:**\n\n"
-        "1. Send or forward any video or video note file.\n"
-        "2. Wait a few moments for conversion.\n"
-        "3. Download your converted MP3 file.\n\n"
-        "📌 **Available Commands:**\n"
-        "• `/start` - Start or restart the bot\n"
-        "• `/help` - Show instructions and commands\n"
-        "• `/about` - Technical details and specs\n"
-        "• `/cancel` - Reset or cancel current operation"
-    )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
-
-
-async def about_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Respond to the /about command."""
-    if not update.message:
-        return
-
-    about_text = (
-        "ℹ️ **About Video to MP3 Bot**\n\n"
-        "• **Output Format:** MP3 (libmp3lame)\n"
-        "• **Supported Inputs:** MP4, MOV, AVI, MKV, Video Notes, Telegram Video Files\n"
-        "• **Processing:** Automated audio extraction via FFmpeg & MoviePy\n"
-        "• **Privacy:** Files are processed securely in temporary storage and deleted immediately."
-    )
-    await update.message.reply_text(about_text, parse_mode="Markdown")
-
-
-async def cancel_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Respond to the /cancel command."""
-    if not update.message:
-        return
-
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /start command."""
+    context.user_data["user_images"] = []
     await update.message.reply_text(
-        "🚫 Operation canceled. Send a new video whenever you are ready!",
+        "👋 **Welcome!**\n\n"
+        "Send me one or more images (as photos or files).\n"
+        "When you are ready, tap **📄 Convert to PDF** below!",
         parse_mode="Markdown",
     )
 
 
-async def handle_video(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Process incoming videos and extract audio to MP3."""
-    message = update.message
-    if not message:
-        return
-
-    video_obj = message.video or message.video_note or message.document
-
-    if not video_obj:
-        await message.reply_text(
-            "⚠️ Please send a valid video file or video note."
-        )
-        return
-
-    status_msg = await message.reply_text(
-        "⏳ *Downloading video...*", parse_mode="Markdown"
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /help command."""
+    await update.message.reply_text(
+        "ℹ️ **How to use this bot:**\n\n"
+        "1. Send your images (as photo or compressed/uncompressed file).\n"
+        "2. Click **📄 Convert to PDF** when finished.\n"
+        "3. Use /status to see how many images are queued.\n"
+        "4. Use /clear to discard stored images.\n"
+        "5. Use /start to reset.",
+        parse_mode="Markdown",
     )
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        input_path = os.path.join(temp_dir, "input_video")
-        output_path = os.path.join(temp_dir, "audio.mp3")
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /status command."""
+    images = context.user_data.get("user_images", [])
+    count = len(images)
+
+    if count == 0:
+        await update.message.reply_text("📥 Your image queue is currently empty.")
+    else:
+        keyboard = [
+            [
+                InlineKeyboardButton("📄 Convert to PDF", callback_data="convert_pdf"),
+                InlineKeyboardButton("🗑️ Clear Images", callback_data="clear_images"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            f"📊 You currently have **{count}** image(s) queued.",
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+
+
+async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /clear command."""
+    context.user_data["user_images"] = []
+    await update.message.reply_text("🗑️ Your image queue has been cleared.")
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles standard Telegram photo uploads."""
+    if "user_images" not in context.user_data:
+        context.user_data["user_images"] = []
+
+    photo_file = await update.message.photo[-1].get_file()
+    image_bytes = await photo_file.download_as_bytearray()
+    context.user_data["user_images"].append(bytes(image_bytes))
+
+    count = len(context.user_data["user_images"])
+
+    keyboard = [
+        [
+            InlineKeyboardButton("📄 Convert to PDF", callback_data="convert_pdf"),
+            InlineKeyboardButton("🗑️ Clear Images", callback_data="clear_images"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"✅ Photo received! Total queued: **{count}**",
+        reply_markup=reply_markup,
+        parse_mode="Markdown",
+    )
+
+
+async def handle_document_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles uncompressed images sent as document files."""
+    doc = update.message.document
+    if doc.mime_type and doc.mime_type.startswith("image/"):
+        if "user_images" not in context.user_data:
+            context.user_data["user_images"] = []
+
+        file = await doc.get_file()
+        image_bytes = await file.download_as_bytearray()
+        context.user_data["user_images"].append(bytes(image_bytes))
+
+        count = len(context.user_data["user_images"])
+
+        keyboard = [
+            [
+                InlineKeyboardButton("📄 Convert to PDF", callback_data="convert_pdf"),
+                InlineKeyboardButton("🗑️ Clear Images", callback_data="clear_images"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"✅ File image received! Total queued: **{count}**",
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ Please send a valid image file (JPG, PNG, WEBP, etc.)."
+        )
+
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes button actions."""
+    query = update.callback_query
+    await query.answer()
+
+    images = context.user_data.get("user_images", [])
+
+    if query.data == "convert_pdf":
+        if not images:
+            await query.edit_message_text(
+                "❌ No images queued. Please send some photos first."
+            )
+            return
+
+        await query.edit_message_text("⏳ Converting images into PDF...")
+        await context.bot.send_chat_action(
+            chat_id=query.message.chat_id, action=ChatAction.UPLOAD_DOCUMENT
+        )
 
         try:
-            # Download file from Telegram
-            telegram_file = await context.bot.get_file(video_obj.file_id)
-            await telegram_file.download_to_drive(custom_path=input_path)
+            converted_images = []
+            for img_bytes in images:
+                image = Image.open(io.BytesIO(img_bytes))
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
 
-            await status_msg.edit_text(
-                "⚙️ *Converting video to MP3...*", parse_mode="Markdown"
+                buf = io.BytesIO()
+                image.save(buf, format="JPEG")
+                converted_images.append(buf.getvalue())
+
+            # Convert images to PDF
+            pdf_bytes = img2pdf.convert(converted_images)
+
+            pdf_file = io.BytesIO(pdf_bytes)
+            pdf_file.name = "converted.pdf"
+
+            await query.message.reply_document(
+                document=pdf_file,
+                filename="converted.pdf",
+                caption="🎉 Here is your converted PDF document!",
             )
 
-            # Extract audio using moviepy
-            clip = VideoFileClip(input_path)
-
-            if clip.audio is None:
-                await status_msg.edit_text(
-                    "❌ *No audio track detected in this video file.*",
-                    parse_mode="Markdown",
-                )
-                clip.close()
-                return
-
-            clip.audio.write_audiofile(
-                output_path, codec="libmp3lame", logger=None
-            )
-            clip.close()
-
-            await status_msg.edit_text(
-                "📤 *Uploading MP3 file...*", parse_mode="Markdown"
-            )
-
-            # Send back converted audio file
-            with open(output_path, "rb") as audio_file:
-                await message.reply_audio(
-                    audio=audio_file,
-                    title="Converted Audio",
-                    performer="Video to MP3 Bot",
-                    caption="✅ Here is your converted MP3 file!",
-                )
-
-            await status_msg.delete()
+            # Reset queue after conversion
+            context.user_data["user_images"] = []
 
         except Exception as e:
-            logger.error(f"Error processing video: {e}")
-            await status_msg.edit_text(
-                "❌ *An error occurred while processing the video.* Please ensure the file is supported and try again.",
-                parse_mode="Markdown",
+            logger.error(f"Error during PDF conversion: {e}")
+            await query.message.reply_text(
+                "❌ Failed to convert images to PDF. Please try again."
             )
 
+    elif query.data == "clear_images":
+        context.user_data["user_images"] = []
+        await query.edit_message_text("🗑️ Queue cleared. Send new images anytime.")
 
-def main() -> None:
-    """Initialize and start the Telegram bot."""
-    if not BOT_TOKEN:
-        logger.error("FATAL: 'BOT_TOKEN' environment variable is missing.")
-        return
 
-    # Build bot application with startup command registration
-    application = (
-        Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fallback handler for unrecognized commands."""
+    await update.message.reply_text(
+        "❓ Unrecognized command. Use /help to see available commands."
     )
 
-    # Command Handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("about", about_command))
-    application.add_handler(CommandHandler("cancel", cancel_command))
 
-    # Media Handler for Videos, Video Notes, and Document Videos
-    application.add_handler(
-        MessageHandler(
-            filters.VIDEO | filters.VIDEO_NOTE | filters.Document.VIDEO,
-            handle_video,
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Global error handler."""
+    logger.error("Exception while handling update:", exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        await update.effective_message.reply_text(
+            "⚠️ An unexpected error occurred while processing your request."
         )
+
+
+def main():
+    if not TOKEN:
+        raise ValueError("TELEGRAM_BOT_TOKEN environment variable is missing!")
+
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .build()
     )
 
-    logger.info("Bot is active and listening for updates...")
-    application.run_polling()
+    # Registered Command Handlers
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("clear", clear_command))
+
+    # Media and Button Handlers
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document_photo))
+    app.add_handler(CallbackQueryHandler(button_callback))
+
+    # Unknown Command Fallback (must be added last among command handlers)
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+
+    # Error Handler
+    app.add_error_handler(error_handler)
+
+    logger.info("Bot started successfully...")
+    app.run_polling()
 
 
 if __name__ == "__main__":
