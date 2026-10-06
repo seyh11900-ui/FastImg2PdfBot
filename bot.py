@@ -218,12 +218,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    if not TOKEN:
-        raise ValueError("TELEGRAM_BOT_TOKEN environment variable is missing!")
+    # Fallback check for either variable name
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
+
+    if not token:
+        raise ValueError("Neither TELEGRAM_BOT_TOKEN nor BOT_TOKEN environment variable is set!")
 
     app = (
         ApplicationBuilder()
-        .token(TOKEN)
+        .token(token)
         .post_init(post_init)
         .build()
     )
