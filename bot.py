@@ -27,6 +27,7 @@ async def post_init(application):
         BotCommand("start", "Start the bot and view instructions"),
         BotCommand("help", "How to use this bot"),
         BotCommand("status", "Check queued images count"),
+        BotCommand("list", "List details of queued images"),
         BotCommand("clear", "Clear all queued images"),
     ]
     await application.bot.set_my_commands(commands)
@@ -48,10 +49,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "ℹ️ **How to use this bot:**\n\n"
         "1. Send your images to this chat (photos or uncompressed files).\n"
-        "2. Tap **📄 Convert to PDF** when you're finished.\n"
-        "3. Use /status to check how many images are in your queue.\n"
-        "4. Use /clear to reset your image queue.\n"
-        "5. Use /start to clear the queue and start fresh.",
+        "2. Tap **📄 Convert to PDF** when finished.\n"
+        "3. Use /status to check how many images are queued.\n"
+        "4. Use /list to view details of queued images.\n"
+        "5. Use /clear to reset your queue.\n"
+        "6. Use /start to reset and start fresh.",
         parse_mode="Markdown",
     )
 
@@ -76,6 +78,31 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode="Markdown",
         )
+
+
+async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the new /list command to view details of queued images."""
+    images = context.user_data.get("user_images", [])
+    if not images:
+        await update.message.reply_text("📥 Your image queue is currently empty.")
+        return
+
+    text = f"📋 **Queued Images ({len(images)} total):**\n\n"
+    for idx, img_bytes in enumerate(images, 1):
+        size_kb = round(len(img_bytes) / 1024, 1)
+        text += f"{idx}. Image #{idx} — **{size_kb} KB**\n"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("📄 Convert to PDF", callback_data="convert_pdf"),
+            InlineKeyboardButton("🗑️ Clear Images", callback_data="clear_images"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        text, reply_markup=reply_markup, parse_mode="Markdown"
+    )
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -215,12 +242,12 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    # Checks both TELEGRAM_BOT_TOKEN and BOT_TOKEN environment variable keys
+    # Checks TELEGRAM_BOT_TOKEN and BOT_TOKEN environment variables
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
 
     if not token:
         raise ValueError(
-            "Bot token is missing! Please add TELEGRAM_BOT_TOKEN or BOT_TOKEN in Railway Variables."
+            "Bot token is missing! Please set TELEGRAM_BOT_TOKEN or BOT_TOKEN in environment variables."
         )
 
     app = (
@@ -234,6 +261,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("clear", clear_command))
 
     # Media and Button Handlers
