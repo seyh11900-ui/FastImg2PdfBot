@@ -37,15 +37,15 @@ async def post_init(application: Application) -> None:
 async def start_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Respond to the /start command."""
+    """Respond to the /start command in Khmer."""
     if not update.message:
         return
 
     welcome_text = (
-        "👋 **Welcome to the Video to MP3 Converter Bot!**\n\n"
-        "Send or forward any **Video**, **Video Note**, or **Video Document** to this chat, "
-        "and I will extract the audio and send it back as an **MP3** file.\n\n"
-        "Press /help to see all available commands."
+        "👋 **សូមស្វាគមន៍មកកាន់ Video to MP3 Converter Bot!**\n\n"
+        "សូមផ្ញើ ឬ Forward ឯកសារ **វីដេអូ**, **Video Note (វីដេអូមូល)** ឬ **ឯកសារវីដេអូ** ផ្សេងៗមកកាន់ Chat នេះ "
+        "ខ្ញុំនឹងធ្វើការទាញយកសំឡេង និងផ្ញើជូនអ្នកវិញជាឯកសារ **MP3** ដោយស្វ័យប្រវត្តិ។\n\n"
+        "ចុច /help ដើម្បីមើលការណែនាំ និងបញ្ជាផ្សេងៗ។"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
