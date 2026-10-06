@@ -20,17 +20,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Fetch Bot Token from Environment Variables (Set in Railway)
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-
 
 async def post_init(application):
-    """Sets up the bot's command menu button inside Telegram."""
+    """Sets up the bot's command menu inside Telegram."""
     commands = [
-        BotCommand("start", "Start the bot and see instructions"),
+        BotCommand("start", "Start the bot and view instructions"),
         BotCommand("help", "How to use this bot"),
-        BotCommand("status", "Check queued images"),
-        BotCommand("clear", "Clear queued images"),
+        BotCommand("status", "Check queued images count"),
+        BotCommand("clear", "Clear all queued images"),
     ]
     await application.bot.set_my_commands(commands)
 
@@ -39,9 +36,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
     context.user_data["user_images"] = []
     await update.message.reply_text(
-        "👋 **Welcome!**\n\n"
+        "👋 **Welcome to Image to PDF Converter!**\n\n"
         "Send me one or more images (as photos or files).\n"
-        "When you are ready, tap **📄 Convert to PDF** below!",
+        "When you are ready, click **📄 Convert to PDF** below!",
         parse_mode="Markdown",
     )
 
@@ -50,11 +47,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /help command."""
     await update.message.reply_text(
         "ℹ️ **How to use this bot:**\n\n"
-        "1. Send your images (as photo or compressed/uncompressed file).\n"
-        "2. Click **📄 Convert to PDF** when finished.\n"
-        "3. Use /status to see how many images are queued.\n"
-        "4. Use /clear to discard stored images.\n"
-        "5. Use /start to reset.",
+        "1. Send your images to this chat (photos or uncompressed files).\n"
+        "2. Tap **📄 Convert to PDF** when you're finished.\n"
+        "3. Use /status to check how many images are in your queue.\n"
+        "4. Use /clear to reset your image queue.\n"
+        "5. Use /start to clear the queue and start fresh.",
         parse_mode="Markdown",
     )
 
@@ -88,7 +85,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles standard Telegram photo uploads."""
+    """Handles photos sent as regular compressed images."""
     if "user_images" not in context.user_data:
         context.user_data["user_images"] = []
 
@@ -146,7 +143,7 @@ async def handle_document_photo(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes button actions."""
+    """Processes button presses from inline keyboards."""
     query = update.callback_query
     await query.answer()
 
@@ -175,7 +172,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 image.save(buf, format="JPEG")
                 converted_images.append(buf.getvalue())
 
-            # Convert images to PDF
+            # Generate PDF in memory
             pdf_bytes = img2pdf.convert(converted_images)
 
             pdf_file = io.BytesIO(pdf_bytes)
@@ -187,7 +184,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption="🎉 Here is your converted PDF document!",
             )
 
-            # Reset queue after conversion
+            # Reset user queue
             context.user_data["user_images"] = []
 
         except Exception as e:
@@ -213,16 +210,18 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Exception while handling update:", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text(
-            "⚠️ An unexpected error occurred while processing your request."
+            "⚠️️ An unexpected error occurred while processing your request."
         )
 
 
 def main():
-    # Fallback check for either variable name
+    # Checks both TELEGRAM_BOT_TOKEN and BOT_TOKEN environment variable keys
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
 
     if not token:
-        raise ValueError("Neither TELEGRAM_BOT_TOKEN nor BOT_TOKEN environment variable is set!")
+        raise ValueError(
+            "Bot token is missing! Please add TELEGRAM_BOT_TOKEN or BOT_TOKEN in Railway Variables."
+        )
 
     app = (
         ApplicationBuilder()
@@ -242,10 +241,10 @@ def main():
     app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document_photo))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    # Unknown Command Fallback (must be added last among command handlers)
+    # Fallback for Unrecognized Commands
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
-    # Error Handler
+    # Global Error Handler
     app.add_error_handler(error_handler)
 
     logger.info("Bot started successfully...")
